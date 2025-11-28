@@ -10,6 +10,8 @@ class BayesianModel {
 private:
     std::unordered_map<std::string, long long> spamCount;
     std::unordered_map<std::string, long long> hamCount;
+
+    std::unordered_map<std::string, int> dfCount;  // document frequency
     std::unordered_set<std::string> vocab;
 
     long long totalSpamWords = 0;
@@ -18,16 +20,16 @@ private:
     int spamEmails = 0;
     int hamEmails = 0;
 
-    double priorSpam = 0.5;
-    double priorHam = 0.5;
-
 public:
     void trainCSV(const std::string& csvPath, bool isSpam);
     double computeProbability(const std::string& text);
+
+    void computeIDF();  // NEW
+
     std::vector<std::pair<std::string,double>> topInformativeWords(int k);
 
 private:
-    double wordProb(const std::string& word, bool isSpam);
+    double idf(const std::string& w);
 };
 
 #endif

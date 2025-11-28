@@ -2,26 +2,28 @@
 #define SPAMFILTER_H
 
 #include "BayesianModel.h"
-#include <string>
 #include <vector>
-
-struct EmailResult {
-    std::string id;
-    bool trueLabel;
-    double prob;
-};
+#include <string>
+#include <fstream>
+#include <sstream>
 
 class SpamFilter {
 private:
-    BayesianModel& model;
-    std::vector<EmailResult> results;
+    struct Email {
+        std::string id;
+        std::string body;
+        std::string label;
+    };
+
+    BayesianModel* model;
+    std::vector<Email> testEmails;
 
 public:
-    SpamFilter(BayesianModel& m) : model(m) {}
+    void setModel(BayesianModel* m) { model = m; }
 
-    void loadCSV(const std::string& path, bool isSpam, const std::string& prefix);
-    void classify(const std::vector<double>& thresholds);
-    void printResults(const std::vector<double>& thresholds);
+    void loadTestCSV(const std::string& csvPath);
+    void evaluate(const std::vector<double>& thresholds);
+    void run();
 };
 
 #endif

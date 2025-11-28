@@ -14,47 +14,37 @@ void BayesianModel::trainCSV(const std::string& csvPath, bool isSpam) {
     }
 
     std::string line;
-
-    // Skip header: id,body,label
-    std::getline(in, line);
+    std::getline(in, line); // skip header
 
     while (std::getline(in, line)) {
         if (line.empty()) continue;
 
-        std::stringstream ss(line);
-        std::string token;
-        std::vector<std::string> parts;
+        // Find last comma (label comes last)
+        size_t lastComma = line.rfind(',');
+        if (lastComma == std::string::npos) continue;
 
-        // Split by comma
-        while (std::getline(ss, token, ',')) {
-            parts.push_back(token);
-        }
+        std::string label = line.substr(lastComma + 1);
+        std::string id_body = line.substr(0, lastComma);
 
-        // We need at least: id , body... , label
-        if (parts.size() < 3) {
-            continue;
-        }
+        // Find first comma (id comes first)
+        size_t firstComma = id_body.find(',');
+        if (firstComma == std::string::npos) continue;
 
-        std::string id = parts[0];
-        std::string label = parts.back();
+        std::string id   = id_body.substr(0, firstComma);
+        std::string body = id_body.substr(firstComma + 1);
 
-        // Rebuild full body from parts[1] ... parts[n-2]
-        std::string body;
-        for (size_t i = 1; i < parts.size() - 1; i++) {
-            if (i > 1) body += " ";
-            body += parts[i];
-        }
-
-        // CLEAN AND TOKENIZE ONLY THE BODY
+        // Clean body
         std::string cleaned = TextProcessor::clean(body);
         auto words = TextProcessor::tokenize(cleaned);
 
-        // Use the provided isSpam parameter (from main)
+        std::unordered_set<std::string> uniqueWords;
+
         if (isSpam) spamEmails++;
         else        hamEmails++;
 
         for (auto& w : words) {
             vocab.insert(w);
+            uniqueWords.insert(w);
 
             if (isSpam) {
                 spamCount[w]++;
@@ -64,23 +54,31 @@ void BayesianModel::trainCSV(const std::string& csvPath, bool isSpam) {
                 totalHamWords++;
             }
         }
+
+        // Track DF
+        for (auto& w : uniqueWords)
+            dfCount[w]++;
     }
 }
 
-double BayesianModel::wordProb(const std::string& w, bool isSpam) {
-    long long count = isSpam ? spamCount[w] : hamCount[w];
-    long long total = isSpam ? totalSpamWords : totalHamWords;
 
-    long long V = vocab.size();
-    return (count + 1.0) / (total + V);
+void BayesianModel::computeIDF() {
+    int N = spamEmails + hamEmails;
+    for (auto& w : vocab) {
+        if (!dfCount.count(w)) dfCount[w] = 1;
+    }
+}
+
+double BayesianModel::idf(const std::string& w) {
+    int N = spamEmails + hamEmails;
+    int df = dfCount.count(w) ? dfCount.at(w) : 1;
+    return std::log(1.0 + double(N) / df); // log-IDF
 }
 
 double BayesianModel::computeProbability(const std::string& text) {
-    // Clean & tokenize
-    std::string cleaned = TextProcessor::clean(text);
-    std::vector<std::string> words = TextProcessor::tokenize(cleaned);
+    auto cleaned = TextProcessor::clean(text);
+    auto words = TextProcessor::tokenize(cleaned);
 
-    // Log priors with smoothing
     double logPriorSpam = std::log(spamEmails + 1) - std::log(spamEmails + hamEmails + 2);
     double logPriorHam  = std::log(hamEmails + 1) - std::log(spamEmails + hamEmails + 2);
 
@@ -90,47 +88,59 @@ double BayesianModel::computeProbability(const std::string& text) {
     const double alpha = 1.0;
     long long V = vocab.size();
 
-    if (words.empty()) {
-        // No words -> return prior probability
-        double maxLog = std::max(logLS, logLH);
-        double sumExp = std::exp(logLS - maxLog) + std::exp(logLH - maxLog);
-        return std::exp(logLS - maxLog) / sumExp;
-    }
+    // Compute term-frequency for this email
+    std::unordered_map<std::string,int> tf;
+    for (auto& w : words) tf[w]++;
 
-    for (const auto& w : words) {
+    int totalWords = words.size();
+
+    for (auto& p : tf) {
+        const std::string& w = p.first;
+        int t = p.second;
+
+        // log-TF
+        double logtf = 1.0 + std::log(t);
+
+        // log-IDF
+        double logidf = idf(w);
+
+        // TF-IDF weight
+        double weight = logtf * logidf;
+
         long long ws = spamCount.count(w) ? spamCount.at(w) : 0;
         long long wh = hamCount.count(w) ? hamCount.at(w) : 0;
 
-        double pw_spam = (ws + alpha) / (totalSpamWords + alpha * V);
-        double pw_ham  = (wh + alpha) / (totalHamWords  + alpha * V);
+        double ps = (ws + alpha) / (totalSpamWords + alpha * V);
+        double ph = (wh + alpha) / (totalHamWords  + alpha * V);
 
-        double denom = static_cast<double>(words.size());
-        logLS += std::log(pw_spam) / denom;
-        logLH += std::log(pw_ham) / denom;
+        logLS += weight * std::log(ps);
+        logLH += weight * std::log(ph);
     }
 
-    // Normalize using log-sum-exp
+    // Likelihood normalization
+    logLS /= totalWords;
+    logLH /= totalWords;
+
+    // log-sum-exp normalization
     double maxLog = std::max(logLS, logLH);
     double sumExp = std::exp(logLS - maxLog) + std::exp(logLH - maxLog);
 
-    return std::exp(logLS - maxLog) / sumExp; // → value in [0,1]
+    return std::exp(logLS - maxLog) / sumExp;
 }
 
 std::vector<std::pair<std::string,double>> BayesianModel::topInformativeWords(int k) {
     std::vector<std::pair<std::string,double>> result;
 
     for (auto& w : vocab) {
-        double ps = wordProb(w, true);
-        double ph = wordProb(w, false);
+        double ps = (spamCount[w] + 1.0) / (totalSpamWords + vocab.size());
+        double ph = (hamCount[w]  + 1.0) / (totalHamWords  + vocab.size());
         double score = std::fabs(std::log(ps) - std::log(ph));
         result.push_back({w, score});
     }
 
     std::sort(result.begin(), result.end(),
-        [](const auto& a, const auto& b) { return a.second > b.second; });
+              [](auto& a, auto& b) { return a.second > b.second; });
 
-    if (result.size() > k)
-        result.resize(k);
-
+    if (result.size() > k) result.resize(k);
     return result;
 }

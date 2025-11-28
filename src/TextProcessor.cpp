@@ -1,27 +1,28 @@
 #include "TextProcessor.h"
+#include "Stopwords.h"
+#include <algorithm>
 #include <cctype>
 #include <sstream>
 
-std::string TextProcessor::clean(const std::string& text) {
-    std::string cleaned;
-    cleaned.reserve(text.size());
-
-    for (char c : text) {
-        if (std::isalnum((unsigned char)c))
-            cleaned.push_back(std::tolower((unsigned char)c));
+std::string TextProcessor::clean(const std::string& s) {
+    std::string r;
+    for (char c : s) {
+        if (std::isalnum(c) || std::isspace(c))
+            r += std::tolower(c);
         else
-            cleaned.push_back(' ');
+            r += ' ';
     }
-    return cleaned;
+    return r;
 }
 
-std::vector<std::string> TextProcessor::tokenize(const std::string& text) {
-    std::vector<std::string> words;
-    std::stringstream ss(text);
+std::vector<std::string> TextProcessor::tokenize(const std::string& s) {
+    std::stringstream ss(s);
     std::string w;
+    std::vector<std::string> result;
 
-    while (ss >> w)
-        words.push_back(w);
-
-    return words;
+    while (ss >> w) {
+        if (!STOPWORDS.count(w))
+            result.push_back(w);
+    }
+    return result;
 }
