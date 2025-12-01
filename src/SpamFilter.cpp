@@ -120,7 +120,7 @@ void SpamFilter::evaluate(const std::vector<double>& thresholds) {
 }
 
 void SpamFilter::run() {
-    double thresholdsArr[] = {0.5, 0.6, 0.7, 0.8, 0.9};
+    double thresholdsArr[] = {0.6, 0.7, 0.8, 0.9, 0.95};
     std::vector<double> thresholds(thresholdsArr, thresholdsArr + 5);
 
     evaluate(thresholds);
